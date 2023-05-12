@@ -85,17 +85,16 @@ def sml_type(value, force=False):
         if not s or len(s) > 2:
             raise Exception('Failed to infer a proper type')
         if len(s) == 1:
-            return '%s list' % s.pop()
+            return f'{s.pop()} list'
         if 'option' not in s:
             raise Exception('Failed to infer a proper type, got multiple types', value, s)
         s.remove('option')
-        return '%s option list' % s.pop()
+        return f'{s.pop()} option list'
     if isinstance(value, dict):
         if 'error' in value:
             return 'exn'
         return '{%s}' % ', '.join(
-            '%s: %s' % (key, sml_type(value[key]))
-            for key in sorted(value.keys())
+            f'{key}: {sml_type(value[key])}' for key in sorted(value.keys())
         )
     types = {int: 'int', str: 'string', float: 'real', bool: 'bool'}
     return types[type(value)]
@@ -112,18 +111,16 @@ def sml_value(value, smltype='', force=False):
     if isinstance(value, bool):
         _value = str(value).lower()
     if isinstance(value, (int, float)):
-        if value < 0:
-            _value = '~%s' % -value
-        else:
-            _value = str(value)
+        _value = f'~{-value}' if value < 0 else str(value)
     if isinstance(value, list):
-        _value = '[%s]' % ', '.join(sml_value(v) for v in value)
+        _value = f"[{', '.join(sml_value(v) for v in value)}]"
     if isinstance(value, dict):
         if 'error' in value:
-            return 'Fail "%s"' % value['error']
-        _value = '{%s}' % ', '.join('%s = %s' % (k, sml_value(v))
-                                  for k, v in value.items())
-    return _value if 'option' not in smltype else ('SOME ' + _value)
+            return f"""Fail "{value['error']}\""""
+        _value = '{%s}' % ', '.join(
+            f'{k} = {sml_value(v)}' for k, v in value.items()
+        )
+    return _value if 'option' not in smltype else f'SOME {_value}'
 
 
 def get_fn_args(case):
@@ -144,8 +141,10 @@ def extract_signatures(data, force=False):
             return s.pop()
         if len(s) == 2 and 'option' in s:
             s.remove('option')
-            return '%s option' % s.pop()
-        raise Exception('Failed to infer a proper type, can not unify different types: %s' % s)
+            return f'{s.pop()} option'
+        raise Exception(
+            f'Failed to infer a proper type, can not unify different types: {s}'
+        )
 
     def signature(xs):
         output = []
@@ -192,20 +191,14 @@ def expectation(signature, fn, args, expected, force=False):
         )
     )
     if sml_type(expected, force=force) == 'exn':
-        return tmpl % (
-            '(fn _ => %s)' % invocation,
-            'error (%s)' % output
-        )
+        return (tmpl % (f'(fn _ => {invocation})', f'error ({output})'))
     if signature['output'] == 'bool':
         return tmpl % (
             invocation,
             'truthy' if expected else 'falsy'
         )
     if signature['output'] == 'real':
-        return tmpl % (
-            invocation,
-            'nearTo 0.001 %s' % output
-        )
+        return (tmpl % (invocation, f'nearTo 0.001 {output}'))
     return tmpl % (
         invocation,
         ('equalTo (%s)' if 'SOME ' in output else 'equalTo %s') % output
@@ -221,44 +214,59 @@ def generate_test_content(data, signature, force=False):
         fn = camelize(case.get('property', exercise))
         expected = case['expected']
         args = get_fn_args(case)
-        return '\n'.join((
-            indent(depth, 'test "%s"' % case.get('description', fn)),
-            indent(depth + 2, expectation(signature[fn], fn, args, expected, force=force))
-        ))
+        return '\n'.join(
+            (
+                indent(depth, f"""test "{case.get('description', fn)}\""""),
+                indent(
+                    depth + 2,
+                    expectation(
+                        signature[fn], fn, args, expected, force=force
+                    ),
+                ),
+            )
+        )
 
     def traverse(cases, depth=0):
         acc = []
         for case in cases:
             if 'cases' in case:
-                acc.append('\n'.join((
-                    indent(depth * 2, 'describe "%s" [' % case['description']),
-                    ',\n\n'.join(traverse(case['cases'], depth + 1)),
-                    indent(depth * 2, ']')
-                )))
+                acc.append(
+                    '\n'.join(
+                        (
+                            indent(
+                                depth * 2,
+                                f"""describe "{case['description']}" [""",
+                            ),
+                            ',\n\n'.join(traverse(case['cases'], depth + 1)),
+                            indent(depth * 2, ']'),
+                        )
+                    )
+                )
             else:
                 acc.append(fmt(case, depth * 2))
         return acc
 
-    return '\n'.join([
-        'use "testlib.sml";',
-        'use "%s.sml";' % data['exercise'],
-        '',
-        'infixr |>',
-        'fun x |> f = f x',
-        '',
-        'val testsuite =',
-        '  describe "%s" [' % data['exercise'],
-        ',\n\n'.join(traverse(data['cases'], depth=2)),
-        '  ]',
-        '',
-        'val _ = Test.run testsuite'
-    ])
+    return '\n'.join(
+        [
+            'use "testlib.sml";',
+            f"""use "{data['exercise']}.sml";""",
+            '',
+            'infixr |>',
+            'fun x |> f = f x',
+            '',
+            'val testsuite =',
+            f"""  describe "{data['exercise']}" [""",
+            ',\n\n'.join(traverse(data['cases'], depth=2)),
+            '  ]',
+            '',
+            'val _ = Test.run testsuite',
+        ]
+    )
 
 
 def generate_exercise_content(signatures):
     def fmt(args):
-        return ', '.join('%s: %s' % (name, value)
-                        for name, value in args.items())
+        return ', '.join(f'{name}: {value}' for name, value in args.items())
 
     return '\n\n'.join(
         'fun {0} ({1}): {2} =\n'
@@ -352,7 +360,7 @@ def generate(exercise, flags, problem_specs_source, force=False):
         write(path / 'test.sml', generate_test_content(data, signatures, force=force))
 
     if flags & STUB:
-        write(path / ('%s.sml' % exercise), content)
+        write(path / f'{exercise}.sml', content)
 
     if flags & EXAMPLE:
         write(path / 'example.sml', content)
@@ -411,9 +419,10 @@ if __name__ == '__main__':
         except CanonicalDataNotFound as e:
             other_sources = [f"'{s.value}'" for s in ProblemSpecsSource if s != args.problem_specs_source]
 
-            msg = f"Could not load canonical data from '{args.problem_specs_source.value}'-repo "\
-                + f"of problem-specifications. Try to specify another source in '--problem-specs-source' "\
+            msg = (
+                f"Could not load canonical data from '{args.problem_specs_source.value}'-repo of problem-specifications. Try to specify another source in '--problem-specs-source' "
                 + f"at command-line (e.g.: {', '.join(other_sources)}). Original Error: {e}"
+            )
 
             print(f"[{exercise}]: {msg}")
         except Exception as e:
